@@ -16,9 +16,7 @@
   }
   h1 { font-size: 2.1rem; margin: 0 0 .4rem; }
   p.sub { color: #6b6754; margin: 0 0 2rem; }
-  .code {
-    display: flex; gap: .45rem; justify-content: center; margin-bottom: .75rem;
-  }
+  .code { display: flex; gap: .45rem; justify-content: center; margin-bottom: .75rem; }
   .code span {
     width: 2.6rem; height: 3.2rem; border-radius: .7rem;
     display: flex; align-items: center; justify-content: center;
@@ -33,6 +31,8 @@
     background: #8a7a2e; color: #fff;
   }
   a.btn.ghost { background: rgba(255,255,255,.75); color: #1c1908; border: 1px solid rgba(58,53,32,.16); }
+  #page { display: none; }
+  #page.show { display: block; }
   footer { margin-top: 2.5rem; font-size: .8rem; color: #6b6754; }
   footer a { color: #8a7a2e; }
   @media (prefers-color-scheme: dark) {
@@ -46,6 +46,7 @@
 </head>
 <body>
 
+<div id="page">
   <h1>Leave it.</h1>
   <p class="sub">Somebody invited you to a property</p>
 
@@ -58,63 +59,97 @@
   <footer>
     <a href="../privacy.html">Privacy</a> &nbsp;·&nbsp; <a href="../terms.html">Terms</a>
   </footer>
+</div>
 
 <script>
 /*
- * One link for a text message. It carries the code, hands it to the app when
- * the app is there, and sends everybody else to the store.
+ * One link for a text message.
  *
- * There is deliberately no automatic redirect. Firing a custom scheme at a
- * phone that does not have the app throws up "cannot open the page", which is
- * a worse first impression than a button. Once the app is listed and has
- * universal links, iOS opens it before this page ever renders and none of
- * this runs.
+ * With the app installed this page is never read: it hands the code straight
+ * to the app and the phone switches away. Without it, the attempt fails
+ * quietly and the page appears about a second later offering the store.
+ *
+ * The page starts hidden on purpose. Drawing it and then leaving is a flash
+ * of the wrong thing on the way to the right one.
+ *
+ * The proper version of this is a universal link, which opens the app before
+ * any of this runs and needs the Apple team id to set up. Until then a custom
+ * scheme is the only handle a web page has on a native app, and on iOS a
+ * scheme nobody claims raises "cannot open the page". The wait below is what
+ * keeps that alert from landing on people who do have the app.
  */
-var APP_STORE = '';   // fill in once the listing exists: https://apps.apple.com/app/idXXXXXXXXX
-var PLAY_STORE = '';  // fill in when Android ships
+var APP_STORE = '';   // https://apps.apple.com/app/idXXXXXXXXX once listed
+var PLAY_STORE = '';
 
 var params = new URLSearchParams(location.search);
 var code = (params.get('c') || params.get('code') || '').replace(/[^0-9A-Za-z]/g, '').slice(0, 6);
+var scheme = code ? 'leaveit://join?code=' + code : 'leaveit://';
 
-var box = document.getElementById('code');
-if (code) {
-  code.split('').forEach(function (ch) {
-    var s = document.createElement('span');
-    s.textContent = ch;
-    box.appendChild(s);
-  });
-} else {
-  document.getElementById('hint').textContent = 'Open the app and enter the code you were sent';
-  box.remove();
-}
-
-document.getElementById('open').href = code ? 'leaveit://join?code=' + code : 'leaveit://';
-
-var ua = navigator.userAgent || '';
-var android = /Android/i.test(ua);
-var store = android ? PLAY_STORE : APP_STORE;
-var get = document.getElementById('get');
-
-if (store) {
-  get.href = store;
-} else {
-  /* No listing yet, so say so rather than sending somebody to a dead link. */
-  get.textContent = 'Coming to the App Store soon';
-  get.removeAttribute('href');
-  get.style.opacity = '.55';
-}
-
-/* Tapping the code copies it, since the next thing anybody does with it is
-   paste it into the app. */
-if (code) {
-  box.style.cursor = 'pointer';
-  box.addEventListener('click', function () {
-    navigator.clipboard && navigator.clipboard.writeText(code).then(function () {
-      var h = document.getElementById('hint');
-      h.textContent = 'Code copied';
-      setTimeout(function () { h.textContent = 'Your invite code'; }, 1800);
+function drawPage() {
+  var box = document.getElementById('code');
+  if (code) {
+    code.split('').forEach(function (ch) {
+      var s = document.createElement('span');
+      s.textContent = ch;
+      box.appendChild(s);
     });
-  });
+    box.style.cursor = 'pointer';
+    box.addEventListener('click', function () {
+      navigator.clipboard && navigator.clipboard.writeText(code).then(function () {
+        var h = document.getElementById('hint');
+        h.textContent = 'Code copied';
+        setTimeout(function () { h.textContent = 'Your invite code'; }, 1800);
+      });
+    });
+  } else {
+    document.getElementById('hint').textContent = 'Open the app and enter the code you were sent';
+    box.remove();
+  }
+
+  document.getElementById('open').href = scheme;
+
+  var store = /Android/i.test(navigator.userAgent || '') ? PLAY_STORE : APP_STORE;
+  var get = document.getElementById('get');
+  if (store) {
+    get.href = store;
+  } else {
+    get.textContent = 'Coming to the App Store soon';
+    get.removeAttribute('href');
+    get.style.opacity = '.55';
+  }
+
+  document.getElementById('page').className = 'show';
+}
+
+/* A phone that switched to the app stops running timers and fires these, so
+   whichever arrives first tells us the handoff worked. */
+var handedOff = false;
+['pagehide', 'blur'].forEach(function (e) {
+  window.addEventListener(e, function () { handedOff = true; });
+});
+document.addEventListener('visibilitychange', function () {
+  if (document.hidden) handedOff = true;
+});
+
+var started = Date.now();
+setTimeout(function () {
+  /* Back from a long pause means the app opened and the person returned, so
+     the elapsed check catches what the events miss. */
+  if (handedOff || document.hidden || Date.now() - started > 2200) return;
+  drawPage();
+}, 1100);
+
+/* Coming back to this page from the app would otherwise bounce straight into
+   it again, so the attempt happens once per visit. */
+try {
+  if (sessionStorage.getItem('tried') === scheme) {
+    drawPage();
+  } else {
+    sessionStorage.setItem('tried', scheme);
+    location.replace(scheme);
+  }
+} catch (e) {
+  location.replace(scheme);
 }
 </script>
 
